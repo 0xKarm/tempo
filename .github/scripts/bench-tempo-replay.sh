@@ -287,6 +287,29 @@ run_single() {
 
   local from_block=$(( SNAPSHOT_BLOCK + 1 ))
 
+  # Resolve git SHA for this run label
+  local git_sha=""
+  case "$label" in
+    baseline*) git_sha="${BASELINE_REF:-}" ;;
+    feature*)  git_sha="${FEATURE_REF:-}" ;;
+  esac
+
+  # Resolve git_ref: tag if tagged, otherwise branch name, otherwise raw SHA
+  local git_ref="$git_sha"
+  if [ -n "$git_sha" ]; then
+    local tag_name
+    tag_name=$(git tag --points-at "$git_sha" 2>/dev/null | head -1)
+    if [ -n "$tag_name" ]; then
+      git_ref="$tag_name"
+    else
+      local branch_name
+      branch_name=$(git branch -r --points-at "$git_sha" 2>/dev/null | sed 's|^ *origin/||' | head -1)
+      if [ -n "$branch_name" ]; then
+        git_ref="$branch_name"
+      fi
+    fi
+  fi
+
   # Warmup
   if [ "$WARMUP" -gt 0 ]; then
     local warmup_to=$(( from_block + WARMUP - 1 ))
@@ -301,12 +324,24 @@ run_single() {
   # Benchmark
   local bench_to=$(( from_block + BLOCKS - 1 ))
   echo "Running benchmark ($BLOCKS blocks: $from_block..$bench_to)..."
+  local clickhouse_report=()
+  if [ -n "${CLICKHOUSE_URL:-}" ]; then
+    clickhouse_report=(--report "clickhouse:$CLICKHOUSE_URL")
+  fi
+
   "$TXGEN_TEMPO_BIN" extract --rpc "$REPLAY_RPC_URL" --from "$from_block" --to "$bench_to" \
     | "$TXGEN_BENCH_BIN" send-blocks \
       --engine http://127.0.0.1:8551 \
       --jwt-secret "$DATADIR/jwt.hex" \
       --metrics-url http://localhost:9001 \
-      --report "json:$output_dir/report.json" 2>&1 | sed -u "s/^/[bench] /"
+      --report "json:$output_dir/report.json" \
+      "${clickhouse_report[@]}" \
+      -m "git-sha=$git_sha" \
+      -m "git-ref=$git_ref" \
+      -m "platform=tempo" \
+      -m "scenario=replay" \
+      -m "chain=$CHAIN_NAME" \
+      -m "blocks=$BLOCKS" 2>&1 | sed -u "s/^/[bench] /"
 
   # Cleanup
   kill "$tail_pid" 2>/dev/null || true
