@@ -12984,7 +12984,6 @@ dependencies = [
  "reth-revm",
  "serde_json",
  "tempfile",
- "tempo-alloy",
  "tempo-chainspec",
  "tempo-consensus-config",
  "tempo-dkg-onchain-artifacts",
